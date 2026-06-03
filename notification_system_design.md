@@ -337,254 +337,499 @@ This notification system provides a simple and scalable solution for managing us
 
 ## Database Selection
 
-For the notification system, **MongoDB** has been chosen as the persistent storage solution.
+For this notification system, **PostgreSQL** has been selected as the primary database.
 
-### Why MongoDB?
+### Why PostgreSQL?
 
-MongoDB is a document-oriented NoSQL database that is well-suited for notification systems because:
+PostgreSQL is a powerful relational database that offers:
 
-* Notifications have a flexible and evolving structure.
-* It provides high write performance for large volumes of notification events.
-* Horizontal scaling through sharding is supported.
-* JSON-like documents map naturally to API request and response payloads.
-* It can efficiently store millions of user notifications while maintaining good query performance.
+* Strong ACID compliance for reliable transactions.
+* Excellent indexing and query optimization capabilities.
+* High performance for filtering and sorting notification data.
+* Support for large datasets containing millions of records.
+* Scalability through partitioning, replication, and indexing.
+* Structured schema design that ensures data consistency.
+
+Since notification data has a predictable structure and relationships with users, a relational database is an appropriate choice.
 
 ---
 
 ## Database Schema
 
-### Collection: notifications
+### Table: notifications
 
-Each notification will be stored as a separate document.
-
-```json
-{
-  "_id": "notif_001",
-  "userId": "user123",
-  "title": "Payment Successful",
-  "message": "Your payment has been processed successfully.",
-  "type": "info",
-  "read": false,
-  "createdAt": "2026-06-03T10:30:00Z",
-  "updatedAt": "2026-06-03T10:30:00Z"
-}
+```sql
+CREATE TABLE notifications (
+    id BIGSERIAL PRIMARY KEY,
+    studentID BIGINT NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    message TEXT NOT NULL,
+    notificationType VARCHAR(20) NOT NULL,
+    isRead BOOLEAN DEFAULT FALSE,
+    createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 ```
 
-### Field Description
+---
 
-| Field     | Type            | Description                     |
-| --------- | --------------- | ------------------------------- |
-| _id       | String/ObjectId | Unique notification identifier  |
-| userId    | String          | User receiving the notification |
-| title     | String          | Notification title              |
-| message   | String          | Notification content            |
-| type      | String          | info, warning, security         |
-| read      | Boolean         | Read status                     |
-| createdAt | Date            | Creation timestamp              |
-| updatedAt | Date            | Last update timestamp           |
+## Column Description
+
+| Column           | Type         | Description                    |
+| ---------------- | ------------ | ------------------------------ |
+| id               | BIGSERIAL    | Unique notification identifier |
+| studentID        | BIGINT       | Student receiving notification |
+| title            | VARCHAR(255) | Notification title             |
+| message          | TEXT         | Notification content           |
+| notificationType | VARCHAR(20)  | Event, Result, Placement       |
+| isRead           | BOOLEAN      | Read status                    |
+| createdAt        | TIMESTAMP    | Notification creation time     |
+| updatedAt        | TIMESTAMP    | Last update time               |
 
 ---
 
 ## Indexing Strategy
 
-To improve query performance, the following indexes should be created.
+### Index for Student Notifications
 
-### User Notifications Index
-
-```javascript
-db.notifications.createIndex({
-  userId: 1
-})
+```sql
+CREATE INDEX idx_notifications_student
+ON notifications(studentID);
 ```
 
-### Unread Notifications Index
+### Index for Unread Notifications
 
-```javascript
-db.notifications.createIndex({
-  userId: 1,
-  read: 1
-})
+```sql
+CREATE INDEX idx_notifications_student_read
+ON notifications(studentID, isRead);
 ```
 
-### Recent Notifications Index
+### Composite Index for Filtering and Sorting
 
-```javascript
-db.notifications.createIndex({
-  createdAt: -1
-})
+```sql
+CREATE INDEX idx_notifications_student_read_created
+ON notifications(studentID, isRead, createdAt);
 ```
 
-These indexes help optimize notification retrieval, unread count calculation, and sorting operations.
+### Index for Notification Type Queries
+
+```sql
+CREATE INDEX idx_notifications_type_created
+ON notifications(notificationType, createdAt);
+```
+
+These indexes improve performance for unread notification retrieval, notification history, and reporting queries.
 
 ---
 
 ## Scalability Challenges
 
-As the number of users and notifications grows, several challenges may arise.
+### 1. Large Data Volume
 
-### 1. Slow Query Performance
-
-Fetching notifications for users with thousands of records may become slower.
-
-#### Solution
-
-* Use indexes on frequently queried fields.
-* Implement pagination.
-* Limit the number of notifications returned per request.
-
-Example:
-
-```javascript
-db.notifications.find({
-  userId: "user123"
-})
-.sort({ createdAt: -1 })
-.limit(20)
-```
-
----
-
-### 2. Increasing Storage Requirements
-
-Over time, notification data can grow significantly and consume large amounts of storage.
+As the platform grows, millions of notifications may accumulate.
 
 #### Solution
 
 * Archive old notifications.
-* Apply data retention policies.
-* Use TTL (Time-To-Live) indexes for automatic cleanup.
+* Partition tables by date.
+* Periodically move historical records to archive tables.
+
+---
+
+### 2. Slow Query Performance
+
+Searching and sorting through millions of rows can become expensive.
+
+#### Solution
+
+* Use composite indexes.
+* Avoid full table scans.
+* Use pagination.
 
 Example:
 
-```javascript
-db.notifications.createIndex(
-  {
-    createdAt: 1
-  },
-  {
-    expireAfterSeconds: 31536000
-  }
-)
+```sql
+SELECT *
+FROM notifications
+WHERE studentID = 1042
+ORDER BY createdAt DESC
+LIMIT 20;
 ```
 
-The above configuration automatically removes notifications older than one year.
-
 ---
 
-### 3. High Write Traffic
+### 3. High Write Load
 
-Large-scale applications may generate thousands of notifications per second.
+Thousands of notifications may be generated every minute.
 
 #### Solution
 
-* Use database sharding.
+* Use connection pooling.
+* Batch inserts where possible.
 * Introduce message queues such as Kafka or RabbitMQ.
-* Process notifications asynchronously before storage.
 
 ---
 
-### 4. Real-Time Delivery Load
+### 4. Real-Time Notification Load
 
-A large number of active WebSocket connections can put pressure on the application server.
+Large numbers of active users can increase server load.
 
 #### Solution
 
-* Use distributed WebSocket servers.
-* Deploy Redis Pub/Sub for event broadcasting.
-* Load balance WebSocket connections across multiple servers.
+* Use WebSockets for push delivery.
+* Use Redis Pub/Sub for event distribution.
+* Scale application servers horizontally.
 
 ---
 
-## MongoDB Queries Based on Stage 1 APIs
+## SQL Queries Based on Stage 1 APIs
 
 ### Create Notification
 
-```javascript
-db.notifications.insertOne({
-  userId: "user123",
-  title: "Payment Successful",
-  message: "Your payment has been processed successfully.",
-  type: "info",
-  read: false,
-  createdAt: new Date(),
-  updatedAt: new Date()
-})
+```sql
+INSERT INTO notifications
+(studentID, title, message, notificationType)
+VALUES
+(1042,
+ 'Placement Update',
+ 'You have been shortlisted.',
+ 'Placement');
 ```
 
 ---
 
 ### Fetch Notifications
 
-```javascript
-db.notifications.find({
-  userId: "user123"
-})
-.sort({
-  createdAt: -1
-})
-.limit(20)
+```sql
+SELECT *
+FROM notifications
+WHERE studentID = 1042
+ORDER BY createdAt DESC
+LIMIT 20;
 ```
 
 ---
 
 ### Get Unread Notification Count
 
-```javascript
-db.notifications.countDocuments({
-  userId: "user123",
-  read: false
-})
+```sql
+SELECT COUNT(*)
+FROM notifications
+WHERE studentID = 1042
+AND isRead = FALSE;
 ```
 
 ---
 
 ### Mark Notification as Read
 
-```javascript
-db.notifications.updateOne(
-  {
-    _id: "notif_001"
-  },
-  {
-    $set: {
-      read: true,
-      updatedAt: new Date()
-    }
-  }
-)
+```sql
+UPDATE notifications
+SET isRead = TRUE,
+    updatedAt = CURRENT_TIMESTAMP
+WHERE id = 101;
 ```
 
 ---
 
 ### Mark All Notifications as Read
 
-```javascript
-db.notifications.updateMany(
-  {
-    userId: "user123",
-    read: false
-  },
-  {
-    $set: {
-      read: true,
-      updatedAt: new Date()
-    }
-  }
-)
+```sql
+UPDATE notifications
+SET isRead = TRUE,
+    updatedAt = CURRENT_TIMESTAMP
+WHERE studentID = 1042
+AND isRead = FALSE;
 ```
 
 ---
 
 ### Delete Notification
 
-```javascript
-db.notifications.deleteOne({
-  _id: "notif_001"
-})
+```sql
+DELETE FROM notifications
+WHERE id = 101;
 ```
+
+---
+
+## Data Retention Strategy
+
+To prevent excessive growth:
+
+* Keep recent notifications in the primary table.
+* Archive notifications older than one year.
+* Periodically remove obsolete records from archive storage if required.
 
 ---
 
 ## Conclusion
 
-MongoDB provides a scalable and flexible solution for storing notification data. Through indexing, pagination, sharding, and automated data retention strategies, the system can efficiently handle increasing traffic and large notification volumes while maintaining fast response times and reliable real-time delivery.
+PostgreSQL provides a reliable and scalable storage solution for the notification system. Through proper schema design, indexing, pagination, partitioning, and archival strategies, the system can efficiently manage millions of notifications while maintaining fast query performance and supporting future growth.
+
+
+
+
+
+# Stage 3
+
+# Query Performance Analysis and Optimization
+
+## Given Query
+
+```sql
+SELECT *
+FROM notifications
+WHERE studentID = 1042
+  AND isRead = false
+ORDER BY createdAt ASC;
+```
+
+---
+
+## Is the Query Correct?
+
+Yes, the query is functionally correct.
+
+It retrieves all unread notifications for student **1042** and sorts them by creation time in ascending order.
+
+However, although the query produces the correct result, it may perform poorly when the database contains millions of records.
+
+---
+
+## Why is the Query Slow?
+
+The system currently contains:
+
+* 50,000 students
+* 5,000,000 notifications
+
+Without proper indexing, the database must scan a large portion of the notifications table to locate matching records.
+
+Potential performance issues include:
+
+### 1. Full Table Scan
+
+If no suitable index exists, the database examines every row in the table.
+
+Computational Cost:
+
+```text
+O(N)
+```
+
+Where:
+
+```text
+N = 5,000,000 notifications
+```
+
+This becomes increasingly expensive as data grows.
+
+---
+
+### 2. Additional Sorting Cost
+
+The query includes:
+
+```sql
+ORDER BY createdAt ASC
+```
+
+If the database cannot use an index for sorting, it performs an additional sort operation.
+
+Computational Cost:
+
+```text
+O(N log N)
+```
+
+This significantly increases execution time.
+
+---
+
+### 3. Selecting All Columns
+
+The query uses:
+
+```sql
+SELECT *
+```
+
+This retrieves every column even if the application only requires a few fields.
+
+This increases:
+
+* Disk I/O
+* Memory usage
+* Network transfer size
+
+---
+
+## Recommended Optimization
+
+Create a composite index matching the filtering and sorting pattern.
+
+### PostgreSQL / MySQL
+
+```sql
+CREATE INDEX idx_notifications_student_read_created
+ON notifications(studentID, isRead, createdAt);
+```
+
+This index allows the database to:
+
+1. Filter by studentID
+2. Filter by isRead
+3. Return rows already sorted by createdAt
+
+As a result, the database avoids both full scans and expensive sorting.
+
+---
+
+## Optimized Query
+
+Instead of:
+
+```sql
+SELECT *
+```
+
+Fetch only required fields.
+
+```sql
+SELECT
+    id,
+    title,
+    message,
+    notificationType,
+    createdAt
+FROM notifications
+WHERE studentID = 1042
+  AND isRead = false
+ORDER BY createdAt ASC;
+```
+
+---
+
+## Expected Computational Cost
+
+### Without Index
+
+```text
+O(N)
+```
+
+or
+
+```text
+O(N log N)
+```
+
+when sorting is required.
+
+### With Composite Index
+
+```text
+O(log N + K)
+```
+
+Where:
+
+* N = Total notifications
+* K = Matching notifications for the student
+
+This provides significantly better performance for large datasets.
+
+---
+
+## Should We Add Indexes on Every Column?
+
+No.
+
+Adding indexes on every column is generally not a good practice.
+
+### Problems with Excessive Indexing
+
+#### Increased Storage Usage
+
+Every index consumes additional disk space.
+
+#### Slower Writes
+
+Whenever a notification is inserted, updated, or deleted, all related indexes must also be updated.
+
+This increases write latency.
+
+#### Poor Index Utilization
+
+Many indexes may never be used by actual queries.
+
+They increase maintenance cost without providing benefits.
+
+---
+
+## Better Approach
+
+Create indexes only on:
+
+* Frequently filtered columns
+* Join columns
+* Columns used in sorting
+* Columns used in range searches
+
+For this notification system:
+
+```sql
+CREATE INDEX idx_notifications_student_read_created
+ON notifications(studentID, isRead, createdAt);
+```
+
+is sufficient for the unread notification query.
+
+---
+
+## Query to Find Students Who Received Placement Notifications in the Last 7 Days
+
+Assuming the table contains:
+
+```text
+notificationType ENUM('Event','Result','Placement')
+```
+
+The following query returns all students who received placement notifications within the last seven days.
+
+### PostgreSQL
+
+```sql
+SELECT DISTINCT studentID
+FROM notifications
+WHERE notificationType = 'Placement'
+  AND createdAt >= NOW() - INTERVAL '7 days';
+```
+
+### MySQL
+
+```sql
+SELECT DISTINCT studentID
+FROM notifications
+WHERE notificationType = 'Placement'
+  AND createdAt >= NOW() - INTERVAL 7 DAY;
+```
+
+---
+
+## Additional Index for Placement Query
+
+```sql
+CREATE INDEX idx_notifications_type_created
+ON notifications(notificationType, createdAt);
+```
+
+This helps the database quickly locate recent placement notifications without scanning the entire table.
+
+---
+
+## Conclusion
+
+The original query is logically correct but may become slow due to full table scans, sorting overhead, and unnecessary data retrieval. A composite index on `(studentID, isRead, createdAt)` greatly improves performance by supporting both filtering and sorting. Indexes should be created based on query patterns rather than added to every column. Proper indexing ensures the notification system remains efficient even with millions of records.
