@@ -833,3 +833,240 @@ This helps the database quickly locate recent placement notifications without sc
 ## Conclusion
 
 The original query is logically correct but may become slow due to full table scans, sorting overhead, and unnecessary data retrieval. A composite index on `(studentID, isRead, createdAt)` greatly improves performance by supporting both filtering and sorting. Indexes should be created based on query patterns rather than added to every column. Proper indexing ensures the notification system remains efficient even with millions of records.
+
+
+# Stage 4
+
+# Performance Optimization Strategy
+
+## Problem Statement
+
+Currently, notifications are fetched directly from the database every time a student loads a page.
+
+With:
+
+* 50,000 students
+* Millions of notifications
+* Frequent page refreshes
+
+the database receives a very large number of repetitive read requests. This increases database load, query latency, server resource consumption, and negatively impacts user experience.
+
+---
+
+## Proposed Solutions
+
+### 1. Implement Pagination
+
+Instead of loading all notifications at once, only a limited number of notifications should be returned per request.
+
+### Example
+
+```sql
+SELECT *
+FROM notifications
+WHERE studentID = 1042
+ORDER BY createdAt DESC
+LIMIT 20 OFFSET 0;
+```
+
+### Benefits
+
+* Reduces query execution time.
+* Lowers memory usage.
+* Decreases network payload size.
+* Improves frontend rendering speed.
+
+### Trade-Offs
+
+* Users need additional requests to view older notifications.
+* OFFSET becomes slower for very large page numbers.
+
+---
+
+## 2. Use Database Indexes
+
+Create indexes on frequently used columns.
+
+```sql
+CREATE INDEX idx_notifications_student_read_created
+ON notifications(studentID, isRead, createdAt);
+```
+
+### Benefits
+
+* Faster filtering.
+* Faster sorting.
+* Reduced query execution cost.
+
+### Trade-Offs
+
+* Additional storage usage.
+* Slightly slower INSERT and UPDATE operations.
+
+---
+
+## 3. Introduce Redis Caching
+
+Frequently requested notifications can be stored in Redis.
+
+### Flow
+
+```text
+Client Request
+      ↓
+Redis Cache Check
+      ↓
+Cache Hit → Return Data
+      ↓
+Cache Miss
+      ↓
+Database Query
+      ↓
+Store Result in Redis
+      ↓
+Return Data
+```
+
+### Benefits
+
+* Extremely fast response times.
+* Significant reduction in database reads.
+* Improved user experience.
+
+### Trade-Offs
+
+* Additional infrastructure cost.
+* Cache invalidation logic is required.
+* Cached data may become temporarily stale.
+
+---
+
+## 4. Real-Time Notifications with WebSockets
+
+Instead of requesting notifications on every page load, the server can push notifications to users in real time.
+
+### Flow
+
+```text
+User Login
+      ↓
+WebSocket Connection
+      ↓
+New Notification Created
+      ↓
+Server Pushes Notification
+      ↓
+Frontend Updates UI Instantly
+```
+
+### Benefits
+
+* Eliminates repeated polling requests.
+* Reduces database load.
+* Better user experience.
+
+### Trade-Offs
+
+* More complex implementation.
+* Persistent connections consume server resources.
+
+---
+
+## 5. Notification Count Caching
+
+The unread notification count is often requested frequently.
+
+Store unread counts in Redis:
+
+```text
+user:1042:unread_count = 5
+```
+
+### Benefits
+
+* Instant unread badge updates.
+* Avoids repetitive COUNT queries.
+
+### Trade-Offs
+
+* Requires synchronization between database and cache.
+
+---
+
+## 6. Background Processing
+
+Notification creation should be handled asynchronously.
+
+### Architecture
+
+```text
+Application
+      ↓
+Message Queue (Kafka/RabbitMQ)
+      ↓
+Notification Worker
+      ↓
+Database
+      ↓
+WebSocket Push
+```
+
+### Benefits
+
+* Faster API response times.
+* Better scalability during traffic spikes.
+
+### Trade-Offs
+
+* Increased system complexity.
+* Additional infrastructure components.
+
+---
+
+## 7. Table Partitioning
+
+As notification data grows into millions of rows, partition the table by date.
+
+### Example
+
+```text
+notifications_2026
+notifications_2027
+notifications_2028
+```
+
+### Benefits
+
+* Faster searches on recent data.
+* Easier maintenance and archival.
+
+### Trade-Offs
+
+* More complex database administration.
+* Additional partition management.
+
+---
+
+## Recommended Architecture
+
+The most effective solution is a combination of:
+
+1. Composite Indexing
+2. Pagination
+3. Redis Caching
+4. WebSocket-Based Real-Time Updates
+5. Background Processing with Kafka/RabbitMQ
+
+### Expected Outcome
+
+* Reduced database load.
+* Faster API response times.
+* Better scalability.
+* Improved user experience.
+* Efficient handling of millions of notifications.
+
+---
+
+## Conclusion
+
+Fetching notifications directly from the database on every page load is not scalable for a large notification system. By combining indexing, pagination, Redis caching, WebSocket-based real-time updates, background processing, and table partitioning, the platform can significantly reduce database pressure while delivering a fast and responsive user experience.
