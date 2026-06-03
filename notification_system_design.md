@@ -1348,3 +1348,47 @@ Benefits:
 ## Conclusion
 
 The original implementation is not suitable for sending notifications to 50,000 students because it is sequential, tightly coupled, and lacks fault tolerance. A queue-based architecture using PostgreSQL, Kafka/RabbitMQ, WebSocket delivery, retry queues, and parallel workers provides a scalable and reliable solution. Notification data should always be stored in the database first, while email and in-app delivery should be processed asynchronously to ensure high performance and fault tolerance.
+
+## Stage 6 – Priority Inbox
+
+### Objective
+
+Display the top N most important unread notifications based on notification type and recency.
+
+### Priority Weights
+
+| Type      | Weight |
+| --------- | ------ |
+| Placement | 3      |
+| Result    | 2      |
+| Event     | 1      |
+
+### Priority Calculation
+
+Priority is calculated using:
+
+Priority Score = Weight + Recency
+
+Notifications are sorted in descending order of priority score.
+
+### Algorithm
+
+1. Fetch notifications from Notification API.
+2. Assign weight based on notification type.
+3. Sort notifications using:
+
+   * Higher weight first
+   * More recent timestamp first
+4. Return top 10 notifications.
+
+### Efficient Maintenance
+
+For continuously incoming notifications, a Min Heap of size 10 can be maintained.
+
+Complexities:
+
+* Insert: O(log N)
+* Remove: O(log N)
+* Space: O(N)
+
+This avoids re-sorting the entire notification list whenever a new notification arrives.
