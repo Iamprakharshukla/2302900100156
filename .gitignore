@@ -1,5 +1,7 @@
-# Node.js
+# Dependencies
 node_modules/
+
+# Environment variables
 .env
 
 # Logs
@@ -12,14 +14,6 @@ Thumbs.db
 # VS Code
 .vscode/
 
-# Build folders
+# Build files
 dist/
 build/
-
-# Python
-__pycache__/
-*.pyc
-
-# Java
-*.class
-target/
