@@ -1070,3 +1070,281 @@ The most effective solution is a combination of:
 ## Conclusion
 
 Fetching notifications directly from the database on every page load is not scalable for a large notification system. By combining indexing, pagination, Redis caching, WebSocket-based real-time updates, background processing, and table partitioning, the platform can significantly reduce database pressure while delivering a fast and responsive user experience.
+
+
+# Stage 5
+
+# Reliable and Scalable Notification Delivery Design
+
+## Analysis of Existing Implementation
+
+The current implementation processes notifications sequentially for each student.
+
+```python
+function notify_all(student_ids, message):
+
+    for student_id in student_ids:
+
+        send_email(student_id, message)
+
+        save_to_db(student_id, message)
+
+        push_to_app(student_id, message)
+```
+
+Although this approach is simple, it is not suitable for sending notifications to 50,000 students simultaneously.
+
+---
+
+## Shortcomings of the Current Design
+
+### 1. Sequential Processing
+
+The system processes one student at a time.
+
+```text
+Student 1
+Student 2
+Student 3
+...
+Student 50000
+```
+
+This significantly increases processing time and reduces system scalability.
+
+### 2. No Failure Recovery
+
+If the email service fails during execution, the system does not provide a recovery mechanism.
+
+Example:
+
+```text
+Email Failed
+Database Saved
+App Notification Sent
+```
+
+This creates inconsistent states across the system.
+
+### 3. Tight Coupling
+
+Database storage, email delivery, and app notification delivery are executed together in a single workflow.
+
+As a result, failure in one service can impact the entire process.
+
+### 4. Poor Scalability
+
+The design cannot efficiently handle large notification campaigns involving thousands of users.
+
+---
+
+## Handling Email Failures
+
+Logs indicate that email delivery failed for 200 students.
+
+The notification should not be lost because notification data is already stored in the database.
+
+Failed email jobs should be retried automatically.
+
+### Retry Mechanism
+
+```text
+Email Queue
+      ↓
+Attempt 1
+      ↓
+Failed
+      ↓
+Retry Queue
+      ↓
+Attempt 2
+      ↓
+Attempt 3
+      ↓
+Dead Letter Queue (DLQ)
+```
+
+After multiple failed attempts, the job is moved to a Dead Letter Queue for manual investigation.
+
+---
+
+## Recommended Architecture
+
+A queue-based event-driven architecture should be used.
+
+```text
+HR Clicks Notify All
+          ↓
+Save Notifications in Database
+          ↓
+Publish Event to Queue
+          ↓
+      Kafka/RabbitMQ
+          ↓
+ ┌─────────────────┐
+ │ Notification    │
+ │ Worker          │
+ └─────────────────┘
+          ↓
+ Push In-App Notification
+
+ ┌─────────────────┐
+ │ Email Worker    │
+ └─────────────────┘
+          ↓
+      Send Email
+```
+
+This design allows independent processing of notification delivery channels.
+
+---
+
+## Should Database Save and Email Sending Happen Together?
+
+No.
+
+The notification must first be stored in the database because the database acts as the source of truth.
+
+Workflow:
+
+```text
+Save Notification
+        ↓
+Publish Event
+        ↓
+Send Email
+        ↓
+Push In-App Notification
+```
+
+Even if email delivery fails, the notification remains available in the system and can be retried later.
+
+This prevents data loss and improves reliability.
+
+---
+
+## Revised Pseudocode
+
+### Notification Creation Service
+
+```python
+function notify_all(student_ids, message):
+
+    for student_id in student_ids:
+
+        save_notification(
+            student_id,
+            message
+        )
+
+        publish_to_queue(
+            "notification_queue",
+            {
+                "student_id": student_id,
+                "message": message
+            }
+        )
+
+    return "Notifications queued successfully"
+```
+
+---
+
+### Notification Worker
+
+```python
+function notification_worker(event):
+
+    push_to_app(
+        event.student_id,
+        event.message
+    )
+
+    publish_to_queue(
+        "email_queue",
+        event
+    )
+```
+
+---
+
+### Email Worker
+
+```python
+function email_worker(event):
+
+    try:
+
+        send_email(
+            event.student_id,
+            event.message
+        )
+
+    except Exception:
+
+        move_to_retry_queue(event)
+```
+
+---
+
+## Performance Improvements
+
+### Batch Database Inserts
+
+Instead of executing thousands of individual insert statements, notifications should be inserted in batches.
+
+Example:
+
+```sql
+INSERT INTO notifications
+(studentID, title, message, notificationType)
+VALUES
+(...),
+(...),
+(...);
+```
+
+Benefits:
+
+* Reduced database overhead
+* Faster execution
+* Better resource utilization
+
+---
+
+### Parallel Worker Processing
+
+Multiple workers can process notifications simultaneously.
+
+```text
+Worker 1
+Worker 2
+Worker 3
+Worker 4
+...
+Worker N
+```
+
+Benefits:
+
+* Higher throughput
+* Faster notification delivery
+* Better scalability
+
+---
+
+## Trade-Offs
+
+| Strategy               | Advantages             | Disadvantages                      |
+| ---------------------- | ---------------------- | ---------------------------------- |
+| Sequential Processing  | Simple implementation  | Very slow at scale                 |
+| Queue-Based Processing | Reliable and scalable  | Additional infrastructure required |
+| Retry Queue            | Prevents data loss     | More operational complexity        |
+| Batch Inserts          | Faster database writes | Larger transaction size            |
+| Multiple Workers       | High throughput        | Requires worker management         |
+
+---
+
+## Conclusion
+
+The original implementation is not suitable for sending notifications to 50,000 students because it is sequential, tightly coupled, and lacks fault tolerance. A queue-based architecture using PostgreSQL, Kafka/RabbitMQ, WebSocket delivery, retry queues, and parallel workers provides a scalable and reliable solution. Notification data should always be stored in the database first, while email and in-app delivery should be processed asynchronously to ensure high performance and fault tolerance.
